@@ -1,0 +1,79 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Inter:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply font-sans antialiased text-stone-800 bg-stone-50/70 dark:text-stone-100 dark:bg-[#120a05] transition-colors duration-300;
+    background-image: radial-gradient(rgba(230, 81, 0, 0.02) 1px, transparent 0);
+    background-size: 24px 24px;
+  }
+}
+
+/* Custom Devotional Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  @apply bg-saffron-300/30 rounded-full hover:bg-saffron-300/70 transition-colors;
+}
+
+/* Premium Design Helpers */
+.glass-light {
+  background: rgba(253, 251, 247, 0.75);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(212, 175, 55, 0.12);
+}
+
+.glass-dark {
+  background: rgba(26, 16, 8, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(212, 175, 55, 0.08);
+}
+
+.glass-gold {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.9), rgba(253, 251, 247, 0.7));
+  border: 1px solid rgba(212, 175, 55, 0.25);
+  box-shadow: 0 8px 32px 0 rgba(230, 81, 0, 0.04);
+}
+
+.dark .glass-gold {
+  background: linear-gradient(135deg, rgba(30, 18, 10, 0.95), rgba(18, 10, 5, 0.9));
+  border: 1px solid rgba(212, 175, 55, 0.15);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+}
+
+.saffron-glow {
+  box-shadow: 0 0 20px 2px rgba(230, 81, 0, 0.15);
+}
+
+.gold-glow {
+  box-shadow: 0 0 15px 1px rgba(255, 215, 0, 0.15);
+}
+
+.gold-gradient-text {
+  @apply bg-clip-text text-transparent bg-gradient-to-r from-saffron-500 via-gold-500 to-saffron-600;
+}
+
+/* Audio Waveform Animation */
+.wave-bar {
+  display: inline-block;
+  width: 4px;
+  height: 15px;
+  border-radius: 4px;
+  @apply bg-saffron-500;
+  animation: wave 1.2s ease-in-out infinite;
+}
+
+@keyframes wave {
+  0%, 100% { height: 6px; }
+  50% { height: 28px; }
+}

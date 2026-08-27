@@ -1,0 +1,60 @@
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# FAISS indices (large binary files — don't commit)
+gita_faiss_index/
+scripture_faiss_index/
+
+# Cached data files (large, regenerable)
+scripture_chunks_cache.json
+mahabharata_progress.json
+
+# SQLite database
+*.db
+*.sqlite
+*.sqlite3
+sanatan_dharma.db
+
+# Audio/media test files
+*.ogg
+*.mp3
+*.wav
+
+# Excel/data files used only for ingestion (keep raw scripture PDFs out too if large)
+*.csv
+Data/*.pdf
+
+# Frontend (npm/node)
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+frontend/.next/
+frontend/.env.local
+npm-debug.log*
+
+# Backend static/uploads
+backend/static/
+
+# OS/editor junk
+.DS_Store
+Thumbs.db
+.vscode/
+*.log
+
+test.ipynb
+test2.ipynb
+*.ipynb_checkpoints/
