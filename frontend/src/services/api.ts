@@ -1,6 +1,13 @@
 import axios from "axios";
 
-const API_BASE_URL = "http://localhost:8000";
+// Backend origin. Set VITE_API_BASE_URL in the hosting dashboard (Vercel ->
+// Settings -> Environment Variables) to the deployed backend URL; it is baked
+// in at build time, so changing it needs a redeploy. Falls back to the local
+// dev server. The trailing slash is stripped because these paths are joined
+// by string concatenation for the SSE and audio URLs, and "//api/..." 404s.
+const API_BASE_URL = (
+  import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000"
+).replace(/\/+$/, "");
 
 export const api = axios.create({
   baseURL: API_BASE_URL,
