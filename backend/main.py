@@ -1,5 +1,6 @@
 import os
 import sys
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -30,6 +31,23 @@ from .api.admin import router as admin_router
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
+def _warm_up():
+    """Build the retrievers off the critical path. Failures are logged, not fatal."""
+    from .retrievers.gita_retriever import gita_retriever_instance
+    from .retrievers.scripture_retriever import scripture_retriever_instance
+
+    for name, proxy in (
+        ("gita index", gita_retriever_instance),
+        ("scripture index", scripture_retriever_instance),
+    ):
+        try:
+            proxy.lazy_resolve()
+            logger.info(f"Warm-up: {name} ready.")
+        except Exception as e:
+            logger.error(f"Warm-up: {name} failed: {e}")
+    logger.info("Warm-up complete.")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Initializing Sanatana Dharma Chatbot backend...")
@@ -56,18 +74,16 @@ async def lifespan(app: FastAPI):
         f"multiquery={settings.ENABLE_MULTIQUERY}"
     )
 
-    # 4. Pre-load retrievers so the first request is not the one that pays the
-    #    model-download cost. Import failures are logged, not fatal.
-    try:
-        from .retrievers.gita_retriever import gita_retriever_instance
-        from .retrievers.scripture_retriever import scripture_retriever_instance
-
-        logger.info(
-            f"Warm-up complete. gita_index={'ready' if gita_retriever_instance.available else 'unavailable'} "
-            f"scripture_index={'ready' if scripture_retriever_instance.available else 'unavailable'}"
-        )
-    except Exception as e:
-        logger.error(f"Retriever warm-up failed: {e}")
+    # 4. Warm the models up on a background thread.
+    #
+    #    uvicorn does not bind its listening socket until this handler returns,
+    #    so doing the work here keeps the port closed for as long as it takes to
+    #    download ~210 MB of ONNX weights and map a 60 MB FAISS index. On a small
+    #    instance that overruns the platform's port scan and the deploy is killed
+    #    with "no open ports detected". Returning immediately lets the port open;
+    #    the models finish loading a few seconds later, and any request that
+    #    arrives first simply blocks on the same lock instead of failing.
+    threading.Thread(target=_warm_up, name="warmup", daemon=True).start()
 
     yield
 
@@ -130,6 +146,19 @@ def health_check():
     from .retrievers.gita_retriever import gita_retriever_instance
     from .retrievers.scripture_retriever import scripture_retriever_instance
 
+    def describe(proxy):
+        # Must not touch the proxy's attributes: that would force the models to
+        # load and turn the platform's health probe into a multi-minute request.
+        if not proxy.lazy_initialized:
+            return ("loading", proxy.lazy_error)
+        return (
+            "ready" if proxy.available else "unavailable",
+            proxy.load_error,
+        )
+
+    gita_state, gita_error = describe(gita_retriever_instance)
+    scripture_state, scripture_error = describe(scripture_retriever_instance)
+
     return {
         "status": "healthy",
         "service": "Sanatana Dharma AI Chatbot Backend",
@@ -141,10 +170,10 @@ def health_check():
             "multiquery_enabled": settings.ENABLE_MULTIQUERY,
         },
         "retrievers": {
-            "gita_index": "ready" if gita_retriever_instance.available else "unavailable",
-            "gita_error": gita_retriever_instance.load_error,
-            "scripture_index": "ready" if scripture_retriever_instance.available else "unavailable",
-            "scripture_error": scripture_retriever_instance.load_error,
+            "gita_index": gita_state,
+            "gita_error": gita_error,
+            "scripture_index": scripture_state,
+            "scripture_error": scripture_error,
         },
         "missing_api_keys": settings.missing_keys(),
     }

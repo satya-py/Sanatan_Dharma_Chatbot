@@ -1,4 +1,6 @@
 from langgraph.graph import StateGraph, END
+
+from ..utils.lazy import LazyObject
 from .state import AgentState
 from .nodes import (
     detect_and_translate_node,
@@ -60,5 +62,6 @@ def build_self_rag_graph():
     print("[LangGraph] Self-RAG Agent workflow successfully compiled.")
     return app
 
-# Expose compiled app
-self_rag_agent = build_self_rag_graph()
+# Expose compiled app. Built on first use: compiling the graph imports the
+# retrievers, which would otherwise load every model at import time.
+self_rag_agent = LazyObject(build_self_rag_graph, "SelfRagGraph")

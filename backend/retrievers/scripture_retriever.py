@@ -6,6 +6,7 @@ from langchain_core.documents import Document
 
 from ..config import settings
 from ..embeddings.models import embedding_manager
+from ..utils.lazy import LazyObject
 
 # Try-except fallbacks for LangChain imports to support different library versions
 try:
@@ -184,5 +185,5 @@ class ScriptureRetriever:
         return embedding_manager.rerank(query, raw_docs, top_k=top_k)
 
 
-# Singleton instance
-scripture_retriever_instance = ScriptureRetriever()
+# Singleton instance, built on first use rather than at import.
+scripture_retriever_instance = LazyObject(ScriptureRetriever, "ScriptureRetriever")

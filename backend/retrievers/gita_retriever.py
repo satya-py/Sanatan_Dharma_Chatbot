@@ -4,6 +4,7 @@ from langchain_community.vectorstores import FAISS
 
 from ..config import settings
 from ..embeddings.models import embedding_manager
+from ..utils.lazy import LazyObject
 
 
 class GitaRetriever:
@@ -54,5 +55,5 @@ class GitaRetriever:
         return self.retriever
 
 
-# Singleton instance
-gita_retriever_instance = GitaRetriever()
+# Singleton instance, built on first use rather than at import.
+gita_retriever_instance = LazyObject(GitaRetriever, "GitaRetriever")

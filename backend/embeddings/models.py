@@ -18,6 +18,7 @@ from typing import List
 from langchain_core.embeddings import Embeddings
 
 from ..config import settings
+from ..utils.lazy import LazyObject
 
 EMBEDDING_MODEL_NAME = "BAAI/bge-small-en-v1.5"
 RERANKER_MODEL_NAME_ONNX = "Xenova/ms-marco-MiniLM-L-6-v2"
@@ -167,5 +168,6 @@ class EmbeddingManager:
         return results
 
 
-# Singleton instance
-embedding_manager = EmbeddingManager()
+# Singleton instance, built on first use rather than at import. See
+# backend/utils/lazy.py for why this matters to the deploy.
+embedding_manager = LazyObject(EmbeddingManager, "EmbeddingManager")

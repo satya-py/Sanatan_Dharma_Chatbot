@@ -24,6 +24,12 @@ services:
       - key: PYTHON_VERSION
         value: "3.12.4"
 
+      # Without this, Python block-buffers stdout when it is not a TTY and the
+      # platform's log viewer shows nothing at all -- no startup lines, no
+      # traceback -- which makes a failed boot impossible to diagnose.
+      - key: PYTHONUNBUFFERED
+        value: "1"
+
       # Keep the model cache inside the project dir so the build-time download
       # survives into the running container.
       - key: FASTEMBED_CACHE_PATH
