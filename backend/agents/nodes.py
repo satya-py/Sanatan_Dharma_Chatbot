@@ -127,6 +127,53 @@ def retrieve_documents_node(state: Dict[str, Any]) -> Dict[str, Any]:
     print(f"[Node: Retriever] Retrieved {len(docs)} documents.")
     return {"documents": docs}
 
+def describe_llm_error(exc: Exception) -> str:
+    """
+    Turn an LLM transport failure into something a reader can act on.
+
+    Every failure used to surface as "I was unable to compile the answer",
+    which is indistinguishable between a spent quota, a bad key and a network
+    blip -- and the quota case is by far the most common, because the Groq free
+    tier allows 200k tokens/day and one question through this graph costs
+    roughly 10k-25k.
+    """
+    text = str(exc)
+    lowered = text.lower()
+
+    if "rate_limit" in lowered or "rate limit" in lowered or "429" in text:
+        detail = ""
+        # The API reports how long the caller has to wait; pass it through.
+        match = re.search(r"try again in ([0-9hms.]+)", text)
+        if match:
+            # The character class also swallows the sentence's full stop.
+            wait = match.group(1).rstrip(".")
+            detail = f" Please try again in {wait}."
+        if "per day" in lowered or "tpd" in lowered:
+            return (
+                "The daily quota for the language model has been used up."
+                f"{detail} The Groq free tier allows 200,000 tokens per day, "
+                "which is roughly 10-20 questions."
+            )
+        return (
+            "Too many requests to the language model in a short window."
+            f"{detail}"
+        )
+
+    if "invalid_api_key" in lowered or "401" in text or "unauthorized" in lowered:
+        return (
+            "The language model rejected the API key. Check GROQ_API_KEY in the "
+            "server environment."
+        )
+
+    if "GROQ_API_KEY is not set" in text:
+        return "The server is missing its GROQ_API_KEY. Set it and redeploy."
+
+    if "timeout" in lowered or "timed out" in lowered:
+        return "The language model took too long to respond. Please try again."
+
+    return "I was unable to compile the answer. Please try again."
+
+
 def generate_answer_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """
     Generates an answer using the retrieved documents.
@@ -166,14 +213,19 @@ def generate_answer_node(state: Dict[str, Any]) -> Dict[str, Any]:
         generation = response.content.strip()
     except Exception as e:
         print(f"[Node: Generator] Error generating response: {e}")
-        generation = "I was unable to compile the answer. Please try again."
-        
+        generation = describe_llm_error(e)
+
     return {"generation": generation}
 
 REFUSAL_MARKERS = (
     "could not find a directly relevant teaching",
     "could not find a relevant teaching",
     "unable to compile the answer",
+    "quota for the language model",
+    "too many requests to the language model",
+    "rejected the api key",
+    "missing its groq_api_key",
+    "took too long to respond",
 )
 
 
