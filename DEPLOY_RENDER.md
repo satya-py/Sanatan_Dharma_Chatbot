@@ -78,11 +78,24 @@ Four independent blockers, in the order Render hits them:
 
 To create the service without a Blueprint, use:
 
+- **Root Directory: leave EMPTY.** Setting it to `backend` makes the working
+  directory `backend/`, the repository root drops off `sys.path`, and startup
+  fails with `ModuleNotFoundError: No module named 'backend'` because
+  `backend/main.py` uses package-relative imports.
 - Build: `pip install -r backend/requirements.txt`
 - Start: `uvicorn backend.main:app --host 0.0.0.0 --port $PORT --workers 1`
 - Health check path: `/api/health`
 
+`--host 0.0.0.0` is required: uvicorn otherwise binds 127.0.0.1, which is
+unreachable from outside the container, and the deploy fails port detection.
+`--port $PORT` is required because the platform chooses the port.
+
 Keep `--workers 1`. Each worker loads its own copy of the models.
+
+If the root directory is already set to `backend` and you would rather not
+change it, use `uvicorn asgi:app --host 0.0.0.0 --port $PORT --workers 1`
+instead. `backend/asgi.py` puts the repository root on sys.path itself and
+works from either location.
 
 ## Connecting the Vercel frontend
 
