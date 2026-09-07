@@ -1,0 +1,63 @@
+services:
+  - type: web
+    name: sanatan-dharma-backend
+    runtime: python
+    plan: free
+    region: singapore
+    branch: main
+
+    # The fastembed model cache is populated at BUILD time and baked into the
+    # image. Without this, every cold start on the free tier re-downloads
+    # ~210 MB of ONNX weights before the service can answer anything.
+    buildCommand: |
+      pip install --upgrade pip
+      pip install -r backend/requirements.txt
+      python -c "from fastembed import TextEmbedding; TextEmbedding(model_name='BAAI/bge-small-en-v1.5')"
+      python -c "from fastembed.rerank.cross_encoder import TextCrossEncoder; TextCrossEncoder(model_name='Xenova/ms-marco-MiniLM-L-6-v2')"
+
+    # Single worker: the 512 MB free tier cannot hold two copies of the models.
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT --workers 1
+
+    healthCheckPath: /api/health
+
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.4"
+
+      # Keep the model cache inside the project dir so the build-time download
+      # survives into the running container.
+      - key: FASTEMBED_CACHE_PATH
+        value: /opt/render/project/src/.fastembed_cache
+
+      # Resource profile for a 512 MB instance. Measured peak RSS:
+      #   rerank on , bm25 off -> ~441 MB fresh, ~511 MB under sustained traffic
+      #   rerank off, bm25 off -> ~345 MB fresh, ~415 MB under sustained traffic
+      #   rerank on , bm25 on  -> ~850 MB  (does not fit)
+      # 511 MB against a 512 MB cap is an OOM kill, so reranking is off here.
+      # On a 2 GB instance set ENABLE_RERANK=true (and optionally
+      # ENABLE_BM25=true) to restore full retrieval quality.
+      - key: EMBEDDING_BACKEND
+        value: onnx
+      - key: ENABLE_RERANK
+        value: "false"
+      - key: ENABLE_BM25
+        value: "false"
+      - key: ENABLE_MULTIQUERY
+        value: "true"
+      - key: LOG_TO_FILE
+        value: "false"
+
+      # Comma-separated allowed browser origins. Replace with your Vercel URL,
+      # e.g. https://sanatan-dharma-chatbot.vercel.app
+      - key: CORS_ORIGINS
+        value: "*"
+
+      # Secrets: set these in the Render dashboard, never in this file.
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: ASSEMBLYAI_API_KEY
+        sync: false

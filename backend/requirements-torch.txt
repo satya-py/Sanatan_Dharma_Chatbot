@@ -1,0 +1,12 @@
+# Optional: only needed when EMBEDDING_BACKEND=torch.
+#
+# Install these ON TOP of requirements.txt, and only on an instance with
+# >= 2 GB RAM. Note the CPU-only wheel index: the default PyPI torch pulls
+# ~900 MB of CUDA libraries that are useless on a CPU host and routinely
+# blow past free-tier build limits.
+#
+#   pip install -r backend/requirements.txt -r backend/requirements-torch.txt
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch>=2.2.0
+sentence-transformers>=2.5.1
+langchain-huggingface>=0.1.0

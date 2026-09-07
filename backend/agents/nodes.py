@@ -9,7 +9,7 @@ from ..utils.languages import (
     detect_language, 
     translate_to_english, 
     translate_answer,
-    translation_llm
+    get_translation_llm,
 )
 from ..retrievers.gita_retriever import gita_retriever_instance
 from ..retrievers.scripture_retriever import scripture_retriever_instance
@@ -21,8 +21,18 @@ from .prompt_templates import (
     CITATION_VALIDATOR_PROMPT
 )
 
-# Initialize Tavily
-tavily_client = TavilyClient(api_key=settings.TAVILY_API_KEY)
+# Tavily is created lazily for the same reason as the Groq client: a missing
+# key should fail the one request that needs it, not the whole process.
+_tavily_client = None
+
+
+def get_tavily_client():
+    global _tavily_client
+    if _tavily_client is None:
+        if not settings.TAVILY_API_KEY:
+            raise RuntimeError("TAVILY_API_KEY is not set.")
+        _tavily_client = TavilyClient(api_key=settings.TAVILY_API_KEY)
+    return _tavily_client
 TRUSTED_DOMAINS = ["sacred-texts.com", "iskcon.org", "valmikiramayan.net", "gbc.iskcon.org", "communications.iskcon.org"]
 
 def detect_and_translate_node(state: Dict[str, Any]) -> Dict[str, Any]:
@@ -51,7 +61,7 @@ def classify_intent_node(state: Dict[str, Any]) -> Dict[str, Any]:
     
     intent = "general_llm"
     try:
-        response = translation_llm.invoke(prompt)
+        response = get_translation_llm().invoke(prompt)
         content = response.content.strip()
         
         # Clean JSON markdown fences if the LLM included them
@@ -83,7 +93,7 @@ def retrieve_documents_node(state: Dict[str, Any]) -> Dict[str, Any]:
         # Leverage MultiQuery and Cross-Encoder reranking
         docs = scripture_retriever_instance.retrieve(
             query, 
-            llm=translation_llm, 
+            llm=get_translation_llm(), 
             use_multiquery=True, 
             top_k=5
         )
@@ -91,7 +101,7 @@ def retrieve_documents_node(state: Dict[str, Any]) -> Dict[str, Any]:
     elif intent == "web_search":
         print(f"[Node: Retriever] Searching Tavily for query: {query}")
         try:
-            results = tavily_client.search(
+            results = get_tavily_client().search(
                 query=query, 
                 include_domains=TRUSTED_DOMAINS, 
                 max_results=3
@@ -152,13 +162,25 @@ def generate_answer_node(state: Dict[str, Any]) -> Dict[str, Any]:
     
     print("[Node: Generator] Generating answer from context...")
     try:
-        response = translation_llm.invoke(prompt)
+        response = get_translation_llm().invoke(prompt)
         generation = response.content.strip()
     except Exception as e:
         print(f"[Node: Generator] Error generating response: {e}")
         generation = "I was unable to compile the answer. Please try again."
         
     return {"generation": generation}
+
+REFUSAL_MARKERS = (
+    "could not find a directly relevant teaching",
+    "could not find a relevant teaching",
+    "unable to compile the answer",
+)
+
+
+def _is_refusal(generation: str) -> bool:
+    text = (generation or "").lower()
+    return any(marker in text for marker in REFUSAL_MARKERS)
+
 
 def validate_answer_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -172,6 +194,14 @@ def validate_answer_node(state: Dict[str, Any]) -> Dict[str, Any]:
     if not docs:
         print("[Node: Validator] Skipping validation for query with no documents (Greeting/General).")
         return {"validation_result": "pass", "feedback_reason": ""}
+
+    # A refusal is a statement about the retrieval, not a claim about scripture.
+    # Validating it just fails it for "not being in the excerpts", which sends
+    # the graph round the retry loop until the budget runs out and then returns
+    # the refusal anyway -- several wasted LLM calls and ~2 extra minutes.
+    if _is_refusal(generation):
+        print("[Node: Validator] Answer is a refusal; nothing to ground. Passing.")
+        return {"validation_result": "pass", "feedback_reason": ""}
         
     # Collate context
     context = "\n\n".join([f"[{d.metadata.get('reference')}]: {d.page_content}" for d in docs])
@@ -181,7 +211,7 @@ def validate_answer_node(state: Dict[str, Any]) -> Dict[str, Any]:
     grounded_prompt = VALIDATOR_PROMPT.format(context=context, generation=generation)
     
     try:
-        response = translation_llm.invoke(grounded_prompt)
+        response = get_translation_llm().invoke(grounded_prompt)
         content = re.sub(r"^```json\s*", "", response.content.strip())
         content = re.sub(r"\s*```$", "", content).strip()
         res_data = json.loads(content)
@@ -199,7 +229,7 @@ def validate_answer_node(state: Dict[str, Any]) -> Dict[str, Any]:
     citation_prompt = CITATION_VALIDATOR_PROMPT.format(context=context, generation=generation)
     
     try:
-        response = translation_llm.invoke(citation_prompt)
+        response = get_translation_llm().invoke(citation_prompt)
         content = re.sub(r"^```json\s*", "", response.content.strip())
         content = re.sub(r"\s*```$", "", content).strip()
         res_data = json.loads(content)
@@ -232,11 +262,19 @@ def query_rewrite_node(state: Dict[str, Any]) -> Dict[str, Any]:
     
     print(f"[Node: Query Rewrite] Rewriting search query (Attempt #{loop})...")
     try:
-        response = translation_llm.invoke(prompt)
-        rewritten = response.content.strip()
+        response = get_translation_llm().invoke(prompt)
+        rewritten = (response.content or "").strip()
     except Exception as e:
         print(f"[Node: Query Rewrite] Error rewriting query: {e}. Retrying with original.")
         rewritten = prev_query
+
+    # The model sometimes returns an empty string (or a bare fence/quote). Searching
+    # on that retrieves arbitrary documents and guarantees the next validation
+    # round also fails, burning the whole retry budget. Fall back instead.
+    rewritten = rewritten.strip('`"\' \n\t')
+    if len(rewritten) < 3:
+        print("[Node: Query Rewrite] Rewrite was empty; keeping the previous query.")
+        rewritten = prev_query or original_query
         
     print(f"[Node: Query Rewrite] Old: {prev_query} | New: {rewritten}")
     return {

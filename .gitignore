@@ -15,13 +15,15 @@ env/
 # Jupyter
 .ipynb_checkpoints/
 
-# FAISS indices (large binary files — don't commit)
-gita_faiss_index/
-scripture_faiss_index/
+# FAISS indices and chunk caches ARE committed: the hosted backend clones
+# this repo and has no other way to get them. ~93 MB total.
+#   gita_faiss_index/          1.7 MB
+#   scripture_faiss_index/     60 MB
+#   scripture_chunks_cache.json 17 MB   (only read when ENABLE_BM25=true)
+#   mahabharata_progress.json   14 MB   (only read when ENABLE_BM25=true)
 
-# Cached data files (large, regenerable)
-scripture_chunks_cache.json
-mahabharata_progress.json
+# Downloaded ONNX model weights
+.fastembed_cache/
 
 # SQLite database
 *.db
@@ -36,6 +38,7 @@ sanatan_dharma.db
 
 # Excel/data files used only for ingestion (keep raw scripture PDFs out too if large)
 *.csv
+!Bhagwad_Gita.csv
 Data/*.pdf
 
 # Frontend (npm/node)

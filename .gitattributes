@@ -1,0 +1,9 @@
+# Data files must survive the round-trip through git byte for byte.
+# Bhagwad_Gita.csv has newlines inside quoted shloka fields, so line-ending
+# conversion would corrupt records; the FAISS indices and caches are read by
+# exact byte offset or parsed as UTF-8 JSON.
+*.faiss   binary
+*.pkl     binary
+Bhagwad_Gita.csv            -text
+scripture_chunks_cache.json -text
+mahabharata_progress.json   -text

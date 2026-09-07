@@ -2,13 +2,23 @@ import json
 from datetime import datetime
 import uuid
 from sqlalchemy import create_engine, Column, String, Integer, Float, DateTime, ForeignKey, Text, JSON
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, relationship
+from sqlalchemy.orm import declarative_base
+from sqlalchemy.orm import relationship, sessionmaker
 from .config import settings
 
+# check_same_thread is a SQLite-only argument; passing it to any other driver
+# (e.g. if DATABASE_URL is switched to Postgres for persistent storage on
+# Render) raises TypeError at import time.
+_connect_args = (
+    {"check_same_thread": False}
+    if settings.DATABASE_URL.startswith("sqlite")
+    else {}
+)
+
 engine = create_engine(
-    settings.DATABASE_URL, 
-    connect_args={"check_same_thread": False}
+    settings.DATABASE_URL,
+    connect_args=_connect_args,
+    pool_pre_ping=True,
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()

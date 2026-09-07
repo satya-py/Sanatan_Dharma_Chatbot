@@ -74,8 +74,15 @@ If no relevant excerpts were found in a section, write: "No directly relevant ve
 (A closing thought or prayer summarizing the teaching)
 """
 
-VALIDATOR_PROMPT = """You are a strict validator for scripture-grounded answers.
-Your task is to perform Groundedness and Hallucination Checks. Compare the Generated Answer against the Retrieved Excerpts.
+# The generator is REQUIRED to produce "Practical Application" and "Conclusion"
+# sections -- devotional guidance that is deliberately not a verbatim restatement
+# of the excerpts. An earlier version of this validator demanded that every
+# sentence be literally present in the retrieved text, so it rejected almost
+# every well-formed answer (measured: 4 of 5 questions refused) and the retry
+# loop then degraded them into "I could not find a teaching". The check below
+# is scoped to what actually constitutes a hallucination for this app:
+# fabricated scripture, wrong citations, or claims that contradict the sources.
+VALIDATOR_PROMPT = """You are a validator for scripture-grounded answers from a Sanatana Dharma study assistant.
 
 Excerpts:
 {context}
@@ -83,20 +90,40 @@ Excerpts:
 Generated Answer:
 {generation}
 
-Analyze if the Generated Answer contains any factual claims, verse citations, or direct teachings that are NOT present in the Excerpts.
-An answer is grounded ONLY if everything it claims is backed by the retrieved excerpts.
+Decide whether the Generated Answer misrepresents the Excerpts.
+
+Mark it NOT grounded ONLY if at least one of these is true:
+1. It quotes a verse, shloka, or translation that does not appear in the Excerpts.
+2. It cites a book, chapter, or verse number that is not supported by the Excerpts.
+3. It states a fact about scripture that contradicts the Excerpts.
+4. It attributes a teaching to a source that the Excerpts do not attribute it to.
+
+The following are explicitly ACCEPTABLE and must NOT be marked as hallucination:
+- Paraphrase, summary, and restatement in different words.
+- Standard theological vocabulary and synonyms (e.g. calling Brahman "the ultimate
+  reality", the soul "eternal", or the Lord "all-pervading").
+- The "Practical Application" and "Conclusion" sections. These are devotional
+  guidance and are SUPPOSED to go beyond the literal text.
+- Widely accepted context that any commentary would supply, provided it does not
+  contradict the Excerpts.
+- A statement that no relevant teaching was found.
 
 Output your evaluation in valid JSON format:
 {{
     "grounded": true | false,
-    "hallucinated_claims": ["List of claims that are not in the excerpts (leave empty if none)"],
+    "hallucinated_claims": ["Only fabricated verses, wrong citations, or contradictions (leave empty if none)"],
     "reason": "Detail why it passes or fails"
 }}
 Output ONLY the JSON block. Do not write any markdown code fences or conversational text.
 """
 
+# Same failure mode as the groundedness validator: an earlier version required
+# the answer's translation to match the excerpt VERBATIM, so ordinary
+# paraphrase ("differences in wording and omitted parenthetical details") was
+# reported as an invalid citation and sent the graph into its retry loop. What
+# matters is that a cited verse exists in the excerpts and is not misattributed.
 CITATION_VALIDATOR_PROMPT = """You are a scripture citation validator.
-Your task is to check if all chapter and verse citations mentioned in the Generated Answer are present and match exactly in the Excerpts.
+Your task is to check that the chapter and verse citations in the Generated Answer are supported by the Excerpts.
 
 Excerpts:
 {context}
@@ -104,15 +131,24 @@ Excerpts:
 Generated Answer:
 {generation}
 
-Identify all citations (e.g., "Bhagavad Gita 2.47", "Srimad Bhagavatam C3 V4", etc.) in the Generated Answer.
-Verify:
-1. Does the cited verse actually appear in the Excerpts?
-2. Does the text attributed to that citation match the excerpt text?
+Identify all citations (e.g., "Bhagavad Gita 2.47", "Srimad Bhagavatam C3 V4") in the Generated Answer.
+
+Mark the citations INVALID only if at least one of these is true:
+1. A cited chapter/verse does not appear anywhere in the Excerpts.
+2. The answer attributes a teaching to a citation whose excerpt is about something
+   materially different (a genuine misattribution, not a rewording).
+3. A citation points to the wrong book or source.
+
+The following are explicitly ACCEPTABLE and must NOT be marked invalid:
+- The translation being paraphrased, condensed, or reworded rather than quoted verbatim.
+- Omitted parenthetical glosses, word-by-word breakdowns, or commentary.
+- Minor differences in spelling, transliteration, or punctuation of Sanskrit terms.
+- Citing only some of the retrieved verses rather than all of them.
 
 Output your evaluation in valid JSON format:
 {{
     "citations_valid": true | false,
-    "invalid_citations": ["List of citations that are incorrect or not in the excerpts (leave empty if none)"],
+    "invalid_citations": ["Only citations absent from the excerpts or genuinely misattributed (leave empty if none)"],
     "reason": "Detail why it passes or fails"
 }}
 Output ONLY the JSON block. Do not write any markdown code fences or conversational text.

@@ -1,34 +1,72 @@
+import csv
 import os
-import pandas as pd
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
 from pydantic import BaseModel
-from typing import List, Optional
-from pathlib import Path
 
 from ..config import settings
 from ..database import get_db
 
 router = APIRouter(prefix="/api/scriptures", tags=["Scripture Explorer API"])
 
-# Cache the Bhagavad Gita DataFrame on startup
-_gita_df: Optional[pd.DataFrame] = None
+# The Gita CSV is ~700 rows. The stdlib csv module handles it in a few
+# milliseconds; importing pandas for this cost ~55 MB of resident memory,
+# which is a large slice of a 512 MB instance's budget.
+_gita_rows: Optional[List[Dict[str, str]]] = None
 
-def get_gita_df() -> pd.DataFrame:
-    global _gita_df
-    if _gita_df is None:
-        csv_path = settings.GITA_CSV_PATH
-        if os.path.exists(csv_path):
-            try:
-                # Force UTF-8 encoding
-                _gita_df = pd.read_csv(csv_path, encoding="utf-8")
-            except Exception as e:
-                print(f"[ScripturesAPI] Error loading Bhagavad Gita CSV: {e}")
-                # Fallback to empty df with standard columns
-                _gita_df = pd.DataFrame(columns=['ID', 'Chapter', 'Verse', 'Shloka', 'Transliteration', 'HinMeaning', 'EngMeaning', 'WordMeaning'])
-        else:
-            print(f"[ScripturesAPI] Warning: Bhagavad Gita CSV not found at {csv_path}")
-            _gita_df = pd.DataFrame(columns=['ID', 'Chapter', 'Verse', 'Shloka', 'Transliteration', 'HinMeaning', 'EngMeaning', 'WordMeaning'])
-    return _gita_df
+VERSE_FIELDS = (
+    "ID", "Chapter", "Verse", "Shloka",
+    "Transliteration", "HinMeaning", "EngMeaning", "WordMeaning",
+)
+
+
+def get_gita_rows() -> List[Dict[str, str]]:
+    """Load and cache the Bhagavad Gita verses from CSV."""
+    global _gita_rows
+    if _gita_rows is not None:
+        return _gita_rows
+
+    csv_path = settings.GITA_CSV_PATH
+    rows: List[Dict[str, str]] = []
+    if os.path.exists(csv_path):
+        try:
+            with open(csv_path, "r", encoding="utf-8", newline="") as f:
+                for raw in csv.DictReader(f):
+                    # Skip rows without a usable chapter/verse number.
+                    try:
+                        chapter = int(float(raw.get("Chapter") or ""))
+                        verse = int(float(raw.get("Verse") or ""))
+                    except (TypeError, ValueError):
+                        continue
+                    row = {k: (raw.get(k) or "").strip() for k in VERSE_FIELDS}
+                    row["Chapter"] = chapter
+                    row["Verse"] = verse
+                    rows.append(row)
+        except Exception as e:
+            print(f"[ScripturesAPI] Error loading Bhagavad Gita CSV: {e}")
+            rows = []
+    else:
+        print(f"[ScripturesAPI] Warning: Bhagavad Gita CSV not found at {csv_path}")
+
+    _gita_rows = rows
+    print(f"[ScripturesAPI] Loaded {len(rows)} Bhagavad Gita verses.")
+    return _gita_rows
+
+
+def _to_verse(row: Dict[str, Any]) -> "VerseOut":
+    return VerseOut(
+        id=row.get("ID") or f"BG{row['Chapter']}.{row['Verse']}",
+        chapter=row["Chapter"],
+        verse=row["Verse"],
+        shloka=row.get("Shloka", ""),
+        transliteration=row.get("Transliteration", ""),
+        hindi_meaning=row.get("HinMeaning", ""),
+        english_meaning=row.get("EngMeaning", ""),
+        word_meaning=row.get("WordMeaning", ""),
+    )
+
 
 # --- Pydantic Models ---
 class VerseOut(BaseModel):
@@ -52,15 +90,13 @@ def get_chapters():
     """
     Get lists of all 18 chapters of Bhagavad Gita and their verse counts.
     """
-    df = get_gita_df()
-    if df.empty:
-        return []
-    
-    # Group by Chapter and count verses
-    grouped = df.groupby("Chapter").size().reset_index(name="count")
+    counts: Dict[int, int] = {}
+    for row in get_gita_rows():
+        counts[row["Chapter"]] = counts.get(row["Chapter"], 0) + 1
+
     return [
-        ChapterSummary(chapter=int(row["Chapter"]), verse_count=int(row["count"]))
-        for _, row in grouped.iterrows()
+        ChapterSummary(chapter=ch, verse_count=counts[ch])
+        for ch in sorted(counts)
     ]
 
 @router.get("/gita/chapters/{chapter_num}", response_model=List[VerseOut])
@@ -68,47 +104,25 @@ def get_chapter_verses(chapter_num: int):
     """
     Get all verses in a specific chapter.
     """
-    df = get_gita_df()
-    chapter_df = df[df["Chapter"] == chapter_num]
-    
-    if chapter_df.empty:
+    matches = [r for r in get_gita_rows() if r["Chapter"] == chapter_num]
+
+    if not matches:
         raise HTTPException(status_code=404, detail=f"Chapter {chapter_num} not found")
-        
-    verses = []
-    for _, row in chapter_df.iterrows():
-        verses.append(VerseOut(
-            id=str(row.get("ID", f"BG{row['Chapter']}.{row['Verse']}")),
-            chapter=int(row["Chapter"]),
-            verse=int(row["Verse"]),
-            shloka=str(row.get("Shloka", "")),
-            transliteration=str(row.get("Transliteration", "")),
-            hindi_meaning=str(row.get("HinMeaning", "")),
-            english_meaning=str(row.get("EngMeaning", "")),
-            word_meaning=str(row.get("WordMeaning", ""))
-        ))
-    return verses
+
+    matches.sort(key=lambda r: r["Verse"])
+    return [_to_verse(r) for r in matches]
 
 @router.get("/gita/chapters/{chapter_num}/verses/{verse_num}", response_model=VerseOut)
 def get_specific_verse(chapter_num: int, verse_num: int):
     """
     Get details of a specific verse (e.g. Chapter 2, Verse 47).
     """
-    df = get_gita_df()
-    verse_row = df[(df["Chapter"] == chapter_num) & (df["Verse"] == verse_num)]
-    
-    if verse_row.empty:
-        raise HTTPException(status_code=404, detail=f"Verse BG {chapter_num}.{verse_num} not found")
-        
-    row = verse_row.iloc[0]
-    return VerseOut(
-        id=str(row.get("ID", f"BG{row['Chapter']}.{row['Verse']}")),
-        chapter=int(row["Chapter"]),
-        verse=int(row["Verse"]),
-        shloka=str(row.get("Shloka", "")),
-        transliteration=str(row.get("Transliteration", "")),
-        hindi_meaning=str(row.get("HinMeaning", "")),
-        english_meaning=str(row.get("EngMeaning", "")),
-        word_meaning=str(row.get("WordMeaning", ""))
+    for row in get_gita_rows():
+        if row["Chapter"] == chapter_num and row["Verse"] == verse_num:
+            return _to_verse(row)
+
+    raise HTTPException(
+        status_code=404, detail=f"Verse BG {chapter_num}.{verse_num} not found"
     )
 
 @router.get("/search", response_model=List[VerseOut])
@@ -116,31 +130,23 @@ def search_verses(query: str):
     """
     Keyword search across English Meaning, Hindi Meaning, and Shloka text.
     """
-    df = get_gita_df()
-    if df.empty or not query:
+    rows = get_gita_rows()
+    if not rows or not query:
         return []
-        
-    # Case-insensitive query matches
-    query_lower = query.lower()
-    matches = df[
-        df["EngMeaning"].str.lower().str.contains(query_lower, na=False) |
-        df["HinMeaning"].str.lower().str.contains(query_lower, na=False) |
-        df["Shloka"].str.lower().str.contains(query_lower, na=False)
-    ]
-    
+
+    q = query.lower()
     results = []
-    # Limit to top 20 search results for performance
-    for _, row in matches.head(20).iterrows():
-        results.append(VerseOut(
-            id=str(row.get("ID", f"BG{row['Chapter']}.{row['Verse']}")),
-            chapter=int(row["Chapter"]),
-            verse=int(row["Verse"]),
-            shloka=str(row.get("Shloka", "")),
-            transliteration=str(row.get("Transliteration", "")),
-            hindi_meaning=str(row.get("HinMeaning", "")),
-            english_meaning=str(row.get("EngMeaning", "")),
-            word_meaning=str(row.get("WordMeaning", ""))
-        ))
+    for row in rows:
+        haystack = (
+            row.get("EngMeaning", ""),
+            row.get("HinMeaning", ""),
+            row.get("Shloka", ""),
+        )
+        if any(q in field.lower() for field in haystack):
+            results.append(_to_verse(row))
+            # Limit to top 20 search results for performance
+            if len(results) == 20:
+                break
     return results
 
 @router.post("/upload", status_code=status.HTTP_201_CREATED)

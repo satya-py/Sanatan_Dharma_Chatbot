@@ -1,5 +1,4 @@
 import os
-import torch
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pathlib import Path
@@ -31,10 +30,13 @@ def get_admin_metrics(db: Session = Depends(get_db)) -> Dict[str, Any]:
     # 2. Vector Database Stats
     gita_vectors = 0
     scripture_vectors = 0
-    if gita_retriever_instance.vector_store:
-        gita_vectors = gita_retriever_instance.vector_store.index.ntotal
-    if scripture_retriever_instance.vector_store:
-        scripture_vectors = scripture_retriever_instance.vector_store.index.ntotal
+    try:
+        if gita_retriever_instance.vector_store:
+            gita_vectors = gita_retriever_instance.vector_store.index.ntotal
+        if scripture_retriever_instance.vector_store:
+            scripture_vectors = scripture_retriever_instance.vector_store.index.ntotal
+    except Exception as e:
+        print(f"[AdminAPI] Error reading vector store statistics: {e}")
         
     # 3. Environment Key Setup Status
     keys_status = {
@@ -45,8 +47,18 @@ def get_admin_metrics(db: Session = Depends(get_db)) -> Dict[str, Any]:
     }
     
     # 4. System / GPU hardware health
-    gpu_available = torch.cuda.is_available()
-    gpu_name = torch.cuda.get_device_name(0) if gpu_available else "N/A"
+    # torch is optional: the default "onnx" embedding backend does not install it.
+    gpu_available = False
+    gpu_name = "N/A"
+    torch_version = "not installed"
+    try:
+        import torch
+
+        torch_version = torch.__version__
+        gpu_available = torch.cuda.is_available()
+        gpu_name = torch.cuda.get_device_name(0) if gpu_available else "N/A"
+    except ImportError:
+        gpu_name = "N/A (torch not installed; embedding backend = onnx)"
     
     # 5. Database File Size
     db_file_path = Path(settings.DATABASE_URL.replace("sqlite:///", ""))
@@ -69,7 +81,10 @@ def get_admin_metrics(db: Session = Depends(get_db)) -> Dict[str, Any]:
         "system_health": {
             "gpu_acceleration": gpu_available,
             "gpu_device_name": gpu_name,
-            "pytorch_version": torch.__version__
+            "pytorch_version": torch_version,
+            "embedding_backend": settings.EMBEDDING_BACKEND,
+            "rerank_enabled": settings.ENABLE_RERANK,
+            "bm25_enabled": settings.ENABLE_BM25
         },
         "keys_configured": keys_status
     }
@@ -80,8 +95,11 @@ def get_system_logs(lines: int = 100) -> Dict[str, Any]:
     Reads the tail of the backend execution log file.
     """
     log_path = LOG_FILE_PATH
-    if not log_path.exists():
-        return {"logs": "Log file not found."}
+    if log_path is None or not log_path.exists():
+        return {
+            "logs": "File logging is disabled (LOG_TO_FILE=false). "
+                    "Logs are written to stdout; view them in the Render dashboard."
+        }
         
     try:
         with open(log_path, "r", encoding="utf-8") as f:
