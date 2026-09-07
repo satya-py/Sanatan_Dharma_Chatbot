@@ -113,3 +113,102 @@ def get_system_logs(lines: int = 100) -> Dict[str, Any]:
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read logs: {str(e)}")
+
+
+@router.get("/check-keys")
+def check_api_keys() -> Dict[str, Any]:
+    """
+    Actively test each API key against its provider.
+
+    /api/health only reports whether a key is *present*, which cannot
+    distinguish a correct key from a truncated or mis-pasted one -- both look
+    configured, and the failure only shows up as a 401 in the middle of an
+    answer. This makes one cheap call per provider and says which are actually
+    accepted.
+
+    The response never contains a key. It reports length and prefix only, which
+    is what identifies a truncated or swapped paste without disclosing the
+    secret itself.
+    """
+    import requests
+
+    def fingerprint(key: str) -> Dict[str, Any]:
+        return {
+            "configured": bool(key),
+            "length": len(key),
+            "prefix": key[:4] if key else None,
+            "looks_padded": bool(key) and key != key.strip(),
+        }
+
+    results: Dict[str, Any] = {}
+
+    checks = [
+        (
+            "groq",
+            settings.GROQ_API_KEY,
+            lambda k: requests.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {k}"},
+                json={
+                    "model": "openai/gpt-oss-120b",
+                    "messages": [{"role": "user", "content": "ok"}],
+                    "max_tokens": 1,
+                },
+                timeout=20,
+            ),
+        ),
+        (
+            "google_gemini",
+            settings.GOOGLE_API_KEY,
+            lambda k: requests.get(
+                "https://generativelanguage.googleapis.com/v1beta/models",
+                headers={"x-goog-api-key": k},
+                timeout=20,
+            ),
+        ),
+        (
+            "tavily",
+            settings.TAVILY_API_KEY,
+            lambda k: requests.post(
+                "https://api.tavily.com/search",
+                json={"api_key": k, "query": "test", "max_results": 1},
+                timeout=20,
+            ),
+        ),
+        (
+            "assemblyai",
+            settings.ASSEMBLYAI_API_KEY,
+            lambda k: requests.get(
+                "https://api.assemblyai.com/v2/transcript?limit=1",
+                headers={"authorization": k},
+                timeout=20,
+            ),
+        ),
+    ]
+
+    for name, key, call in checks:
+        info = fingerprint(key)
+        if not key:
+            info["status"] = "missing"
+            results[name] = info
+            continue
+        try:
+            resp = call(key)
+            info["http_status"] = resp.status_code
+            if resp.status_code == 200:
+                info["status"] = "ok"
+            elif resp.status_code in (401, 403):
+                info["status"] = "rejected"
+                info["hint"] = "Key is wrong, revoked, or was pasted with extra characters."
+            elif resp.status_code == 429:
+                info["status"] = "rate_limited"
+                info["hint"] = "Key is valid but the quota is currently exhausted."
+            else:
+                info["status"] = "error"
+                info["detail"] = resp.text[:200]
+        except Exception as e:
+            info["status"] = "unreachable"
+            info["detail"] = str(e)[:200]
+        results[name] = info
+
+    return {"keys": results}

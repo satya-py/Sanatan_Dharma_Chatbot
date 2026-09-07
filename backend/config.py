@@ -56,6 +56,28 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    @field_validator(
+        "GOOGLE_API_KEY", "GROQ_API_KEY", "TAVILY_API_KEY", "ASSEMBLYAI_API_KEY"
+    )
+    @classmethod
+    def _clean_key(cls, v: str) -> str:
+        """
+        Strip whitespace and wrapping quotes from an API key.
+
+        Pasting a key into a hosting dashboard very easily carries a trailing
+        newline or a pair of quotes along with it. Either goes straight into the
+        Authorization header and the provider answers 401, which reads as "your
+        key is wrong" even though the key itself is fine. Nothing legitimate is
+        lost by trimming: none of these providers issue keys with leading or
+        trailing whitespace.
+        """
+        if not v:
+            return v
+        v = v.strip()
+        if len(v) >= 2 and v[0] == v[-1] and v[0] in ("'", '"'):
+            v = v[1:-1].strip()
+        return v
+
     @field_validator("EMBEDDING_BACKEND")
     @classmethod
     def _valid_backend(cls, v: str) -> str:
